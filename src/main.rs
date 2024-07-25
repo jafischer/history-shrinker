@@ -20,7 +20,7 @@ use simple_logger::SimpleLogger;
 /// the following function:
 /// ```bash
 /// hgrep () {
-///     history | grep "$@"
+///     history | grep "$@" | grep -v hgrep
 /// }
 /// ```
 /// I use it probably more than I google for things. It's like googling your command history.
@@ -43,9 +43,13 @@ pub struct Args {
     /// Logging level. Default: Info. Valid values: Off, Error, Warn, Info, Debug, Trace.
     #[arg(short, long, default_value = "info", global = true)]
     pub log: LevelFilter,
-    /// Path to the history file to process. Default is $HISTFILE if HISTFILE is
-    /// exported as an environment variable, otherwise ~/.bash_history.
-    pub histfile: Option<String>,
+    /// Path to the history file to process [default is $HISTFILE if HISTFILE is
+    /// exported as an environment variable, otherwise ~/.bash_history]
+    #[arg(short, long)]
+    pub input: Option<String>,
+    /// Name of the output file.
+    #[arg(short, long, default_value = "shrunk_history")]
+    pub output: String,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -56,14 +60,14 @@ fn main() -> anyhow::Result<()> {
         .init()
         .unwrap();
 
-    let histfile = if let Some(histfile_arg) = args.histfile {
+    let histfile = if let Some(histfile_arg) = args.input {
         Path::new(&histfile_arg).into()
     } else if let Ok(histfile_env) = env::var("HISTFILE") {
         Path::new(&histfile_env).into()
     } else {
         home_dir().unwrap().join(".bash_history")
     };
-    
+
     // Slurp the whole file into a string.
     let contents = fs::read_to_string(histfile)?;
     let lines = contents
@@ -84,17 +88,7 @@ fn main() -> anyhow::Result<()> {
             // We've found the timestamp for the next command. So add the existing
             // command with the previous timestamp;
 
-            if !command.is_empty() && !commands_seen.contains(&command) && !should_exclude_cmd(&command) {
-                let command = filter_command(&command);
-                commands_seen.insert(command.clone());
-                
-                flag_command(&command, &mut flagged_commands);
-
-                if command.len() > 100 {
-                    big_commands.insert(command.len(), command.clone());
-                }
-                command_map.insert(timestamp, command);
-            }
+            add_command(timestamp, &command, &mut command_map, &mut commands_seen, &mut big_commands, &mut flagged_commands);
             timestamp = new_timestamp;
             command = String::new();
         } else {
@@ -102,35 +96,60 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Because in the above loop we only add a command when we see the next command's timestamp, we
+    // won't have added the final command. So do that now.
+    add_command(timestamp, &command, &mut command_map, &mut commands_seen, &mut big_commands, &mut flagged_commands);
+
     let mut big_command_lengths = big_commands.keys().collect::<Vec<&usize>>();
     big_command_lengths.sort();
     for length in big_command_lengths {
-        let commands = big_commands.get_vec(&length).unwrap();
+        let commands = big_commands.get_vec(length).unwrap();
         trace!("{} Commands of length {length}", commands.len());
         for command in commands {
-            trace!("    {command}\n");
+            trace!("{}", command.trim_end());
         }
     }
-    
+
     if !flagged_commands.is_empty() {
         info!("+=======================+");
         info!("| {:3} FLAGGED COMMANDS  |", flagged_commands.len());
         info!("+=======================+");
         flagged_commands.iter().for_each(|command| info!("{}", command.trim_end()));
     }
-    
-    let mut output = File::create("shrunk_bash_history")?;
+
+    let mut output = File::create(&args.output)?;
     for (timestamp, commands) in command_map {
         for command in commands {
             output.write_all(format!("#{}\n", timestamp).as_bytes())?;
             // command already ends in newline
-            output.write_all(format!("{command}").as_bytes())?;
+            output.write_all(command.as_bytes())?;
         }
     }
 
     Ok(())
 }
 
+fn add_command(timestamp: u32,
+               command: &str,
+               command_map: &mut BTreeMultiMap<u32, String>,
+               commands_seen: &mut HashSet<String>,
+               big_commands: &mut BTreeMultiMap<usize, String>,
+               flagged_commands: &mut HashSet<String>) {
+    if !command.is_empty() {
+        let filtered_command = filter_command(command);
+
+        if !commands_seen.contains(&filtered_command) && !should_exclude_cmd(&filtered_command) {
+            commands_seen.insert(filtered_command.clone());
+
+            flag_command(&filtered_command, flagged_commands);
+
+            if filtered_command.len() >= 200 {
+                big_commands.insert(filtered_command.len(), filtered_command.clone());
+            }
+            command_map.insert(timestamp, filtered_command);
+        }
+    }
+}
 
 static TIMESTAMP_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("^#[0-9]{8}[0-9]*$").unwrap());
 
@@ -244,7 +263,7 @@ fn should_exclude_cmd(command: &str) -> bool {
 }
 
 fn filter_command(command: &str) -> String {
-    let mut filtered_command: String = command.into(); 
+    let mut filtered_command: String = command.into();
     for (regex, replacement) in REPLACEMENTS.iter() {
         if regex.is_match(&filtered_command) {
             debug!("Replacing {regex} with {replacement} in {command}");
