@@ -69,10 +69,10 @@ fn main() -> anyhow::Result<()> {
     let lines = contents
         .lines();
 
-    let mut timestamp = String::from("946713600"); // epoch seconds for Jan 1, 2000
+    let mut timestamp = 0u32;
     let mut command = String::new();
     // The map that stores the commands that we will write out to the reduced history file.
-    let mut command_map: BTreeMultiMap<String, String> = BTreeMultiMap::new();
+    let mut command_map: BTreeMultiMap<u32, String> = BTreeMultiMap::new();
     // This set is used to strip out duplicate commands from the history.
     let mut commands_seen: HashSet<String> = HashSet::new();
     // And let's keep track of the largest commands, too.
@@ -80,11 +80,11 @@ fn main() -> anyhow::Result<()> {
     let mut flagged_commands: HashSet<String> = HashSet::new();
 
     for line in lines {
-        if is_timestamp(line) {
+        if let Some(new_timestamp) = parse_timestamp(line) {
             // We've found the timestamp for the next command. So add the existing
             // command with the previous timestamp;
 
-            if !commands_seen.contains(&command) && !should_exclude_cmd(&command) {
+            if !command.is_empty() && !commands_seen.contains(&command) && !should_exclude_cmd(&command) {
                 let command = filter_command(&command);
                 commands_seen.insert(command.clone());
                 
@@ -95,7 +95,7 @@ fn main() -> anyhow::Result<()> {
                 }
                 command_map.insert(timestamp, command);
             }
-            timestamp = line.into();
+            timestamp = new_timestamp;
             command = String::new();
         } else {
             command = format!("{command}{line}\n");
@@ -122,7 +122,7 @@ fn main() -> anyhow::Result<()> {
     let mut output = File::create("shrunk_bash_history")?;
     for (timestamp, commands) in command_map {
         for command in commands {
-            output.write_all(format!("{}\n", timestamp).as_bytes())?;
+            output.write_all(format!("#{}\n", timestamp).as_bytes())?;
             // command already ends in newline
             output.write_all(format!("{command}").as_bytes())?;
         }
@@ -132,10 +132,14 @@ fn main() -> anyhow::Result<()> {
 }
 
 
-static TIMESTAMP_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("^#[0-9]{10}$").unwrap());
+static TIMESTAMP_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("^#[0-9]{8}[0-9]*$").unwrap());
 
-fn is_timestamp(line: &str) -> bool {
-    TIMESTAMP_REGEX.is_match(line)
+fn parse_timestamp(line: &str) -> Option<u32> {
+    if TIMESTAMP_REGEX.is_match(line) {
+        Some(line[1..].parse().unwrap())
+    } else {
+        None
+    }
 }
 
 // I looked for my most common commands via:
@@ -254,6 +258,6 @@ fn filter_command(command: &str) -> String {
 
 fn flag_command(command: &str, flagged_commands: &mut HashSet<String>) {
     if let Some(regex) = PATTERNS_TO_FLAG.iter().find(|regex| regex.is_match(command)) {
-        flagged_commands.insert(format!("{regex}: {command}"));
+        flagged_commands.insert(format!("Flagged for '{regex}': {command}"));
     }
 }
