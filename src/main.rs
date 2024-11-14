@@ -1,13 +1,13 @@
-use std::collections::{HashSet};
-use std::{env, fs};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
-use std::path::{Path};
-use btreemultimap::BTreeMultiMap;
+use std::path::Path;
+use std::{env, fs};
 
+use btreemultimap::BTreeMultiMap;
 use clap::{command, Parser};
 use home::home_dir;
-use log::{debug, info, LevelFilter, trace};
+use log::{debug, info, trace, LevelFilter};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use simple_logger::SimpleLogger;
@@ -17,7 +17,7 @@ use simple_logger::SimpleLogger;
 /// Reduces history file size, by removing:
 /// - duplicates
 /// - certain common commands
-/// - 
+/// -
 ///
 /// - scrape the file of anything confidential (passwords, etc.)
 pub struct Args {
@@ -39,10 +39,7 @@ pub struct Args {
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    SimpleLogger::new()
-        .with_level(args.log)
-        .init()
-        .unwrap();
+    SimpleLogger::new().with_level(args.log).init().unwrap();
 
     let histfile = if let Some(histfile_arg) = args.input {
         Path::new(&histfile_arg).into()
@@ -54,8 +51,7 @@ fn main() -> anyhow::Result<()> {
 
     // Slurp the whole file into a string.
     let contents = fs::read_to_string(histfile)?;
-    let lines = contents
-        .lines();
+    let lines = contents.lines();
 
     let mut timestamp = 0u32;
     let mut command = String::new();
@@ -72,7 +68,14 @@ fn main() -> anyhow::Result<()> {
             // We've found the timestamp for the next command. So add the existing
             // command with the previous timestamp;
 
-            add_command(timestamp, &command, &mut command_map, &mut commands_seen, &mut big_commands, &mut flagged_commands);
+            add_command(
+                timestamp,
+                &command,
+                &mut command_map,
+                &mut commands_seen,
+                &mut big_commands,
+                &mut flagged_commands,
+            );
             timestamp = new_timestamp;
             command = String::new();
         } else {
@@ -98,7 +101,9 @@ fn main() -> anyhow::Result<()> {
         info!("+=======================+");
         info!("| {:3} FLAGGED COMMANDS  |", flagged_commands.len());
         info!("+=======================+");
-        flagged_commands.iter().for_each(|command| info!("{}", command.trim_end()));
+        flagged_commands
+            .iter()
+            .for_each(|command| info!("{}", command.trim_end()));
     }
 
     let mut output = File::create(&args.output)?;
@@ -113,12 +118,14 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn add_command(timestamp: u32,
-               command: &str,
-               command_map: &mut BTreeMultiMap<u32, String>,
-               commands_seen: &mut HashSet<String>,
-               big_commands: &mut BTreeMultiMap<usize, String>,
-               flagged_commands: &mut HashSet<String>) {
+fn add_command(
+    timestamp: u32,
+    command: &str,
+    command_map: &mut BTreeMultiMap<u32, String>,
+    commands_seen: &mut HashSet<String>,
+    big_commands: &mut BTreeMultiMap<usize, String>,
+    flagged_commands: &mut HashSet<String>,
+) {
     if !command.is_empty() {
         let filtered_command = filter_command(command);
 
@@ -176,79 +183,84 @@ fn parse_timestamp(line: &str) -> Option<u32> {
 // 120 gi
 // 107 pbpaste
 // Total == 5607, so over half of the 10,000 commands in my history.
-static EXCLUDE_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| vec![
-    // Common commands (which I don't need to save)
-    Regex::new("^echo ").unwrap(),
-    Regex::new("^en ").unwrap(),
-    Regex::new("^cd ").unwrap(),
-    Regex::new("^cd$").unwrap(),
-    Regex::new("^ls ").unwrap(),
-    Regex::new("^ls$").unwrap(),
-    Regex::new("^l ").unwrap(),
-    Regex::new("^l$").unwrap(),
-    Regex::new("^la ").unwrap(),
-    Regex::new("^la$").unwrap(),
-    Regex::new("^lt ").unwrap(),
-    Regex::new("^lt$").unwrap(),
-    Regex::new("^vi ").unwrap(),
-    Regex::new("^md ").unwrap(),
-    Regex::new("^rd ").unwrap(),
-    Regex::new("^mv ").unwrap(),
-    Regex::new("^rm ").unwrap(),
-    Regex::new("^cp ").unwrap(),
-    Regex::new("^ij ").unwrap(),
-    Regex::new("^rr ").unwrap(),
-    Regex::new("^s ").unwrap(),
-    Regex::new("^type ").unwrap(),
-    Regex::new("^sk8s ").unwrap(),
-    Regex::new("^history").unwrap(),
-    Regex::new("^fexpr ").unwrap(),
-    Regex::new("^git add").unwrap(),
-    Regex::new("^git pull").unwrap(),
-    Regex::new("^gpull").unwrap(),
-    Regex::new("^gst").unwrap(),
-    Regex::new("^git status").unwrap(),
-    Regex::new("^git checkout").unwrap(),
-    Regex::new("^git mv").unwrap(),
-    Regex::new("^git rm").unwrap(),
-    Regex::new("^git diff").unwrap(),
-    Regex::new("^git checkout").unwrap(),
-    // All sk8s commands (e.g. 8l, 8h, 8logs)
-    Regex::new("^8").unwrap(),
-    Regex::new("help").unwrap(),
+static EXCLUDE_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+    vec![
+        // Common commands (which I don't need to save)
+        Regex::new("^echo ").unwrap(),
+        Regex::new("^en ").unwrap(),
+        Regex::new("^cd ").unwrap(),
+        Regex::new("^cd$").unwrap(),
+        Regex::new("^ls ").unwrap(),
+        Regex::new("^ls$").unwrap(),
+        Regex::new("^l ").unwrap(),
+        Regex::new("^l$").unwrap(),
+        Regex::new("^la ").unwrap(),
+        Regex::new("^la$").unwrap(),
+        Regex::new("^lt ").unwrap(),
+        Regex::new("^lt$").unwrap(),
+        Regex::new("^vi ").unwrap(),
+        Regex::new("^md ").unwrap(),
+        Regex::new("^rd ").unwrap(),
+        Regex::new("^mv ").unwrap(),
+        Regex::new("^rm ").unwrap(),
+        Regex::new("^cp ").unwrap(),
+        Regex::new("^ij ").unwrap(),
+        Regex::new("^rr ").unwrap(),
+        Regex::new("^s ").unwrap(),
+        Regex::new("^type ").unwrap(),
+        Regex::new("^sk8s ").unwrap(),
+        Regex::new("^history").unwrap(),
+        Regex::new("^fexpr ").unwrap(),
+        Regex::new("^git add").unwrap(),
+        Regex::new("^git pull").unwrap(),
+        Regex::new("^gpull").unwrap(),
+        Regex::new("^gst").unwrap(),
+        Regex::new("^git status").unwrap(),
+        Regex::new("^git checkout").unwrap(),
+        Regex::new("^git mv").unwrap(),
+        Regex::new("^git rm").unwrap(),
+        Regex::new("^git diff").unwrap(),
+        Regex::new("^git checkout").unwrap(),
+        // All sk8s commands (e.g. 8l, 8h, 8logs)
+        Regex::new("^8").unwrap(),
+        Regex::new("help").unwrap(),
+        // Commands with potential secrets
+        Regex::new("echo.*\\| *pbcopy").unwrap(),
+        Regex::new("en .*\\| *pbcopy").unwrap(),
+        Regex::new("echo.*\\| *clip.exe").unwrap(),
+        Regex::new("en .*\\| *clip.exe").unwrap(),
+        Regex::new("echo.*\\| *base64").unwrap(),
+        Regex::new("en .*\\| *base64").unwrap(),
+    ]
+});
 
-    // Commands with potential secrets
-    Regex::new("echo.*\\| *pbcopy").unwrap(),
-    Regex::new("en .*\\| *pbcopy").unwrap(),
-    Regex::new("echo.*\\| *clip.exe").unwrap(),
-    Regex::new("en .*\\| *clip.exe").unwrap(),
-    Regex::new("echo.*\\| *base64").unwrap(),
-    Regex::new("en .*\\| *base64").unwrap(),
-]);
+static REPLACEMENTS: Lazy<Vec<(Regex, &str)>> = Lazy::new(|| {
+    vec![
+        (Regex::new("Authorization: Bearer [^'\"]*").unwrap(), "Authorization: Bearer xxx"),
+        (Regex::new("password=\"[^$][^ ]*").unwrap(), "password=XXX"),
+        (Regex::new("password=[^$][^ ]*").unwrap(), "password=XXX"),
+        (Regex::new("password: ?[^ ]*").unwrap(), "password: XXX"),
+    ]
+});
 
-static REPLACEMENTS: Lazy<Vec<(Regex, &str)>> = Lazy::new(|| vec![
-    (Regex::new("Authorization: Bearer [^'\"]*").unwrap(), "Authorization: Bearer xxx"),
-    (Regex::new("password=\"[^$][^ ]*").unwrap(), "password=XXX"),
-    (Regex::new("password=[^$][^ ]*").unwrap(), "password=XXX"),
-    (Regex::new("password: ?[^ ]*").unwrap(), "password: XXX"),
-]);
-
-static PATTERNS_TO_FLAG: Lazy<Vec<Regex>> = Lazy::new(|| vec![
-    Regex::new("password").unwrap(),
-    Regex::new("ssh").unwrap(),
-    Regex::new("secret").unwrap(),
-    Regex::new("base64").unwrap(),
-    Regex::new("jasypt").unwrap(),
-]);
-
+static PATTERNS_TO_FLAG: Lazy<Vec<Regex>> = Lazy::new(|| {
+    vec![
+        Regex::new("password").unwrap(),
+        Regex::new("ssh").unwrap(),
+        Regex::new("secret").unwrap(),
+        Regex::new("base64").unwrap(),
+        Regex::new("jasypt").unwrap(),
+    ]
+});
 
 fn should_exclude_cmd(command: &str) -> bool {
-    EXCLUDE_PATTERNS.iter().any(|regex|
-        {
-            let is_match = regex.is_match(command);
-            if is_match { debug!("Cmd matches {regex}: {}", command.trim_end()) }
-            is_match
-        })
+    EXCLUDE_PATTERNS.iter().any(|regex| {
+        let is_match = regex.is_match(command);
+        if is_match {
+            debug!("Cmd matches {regex}: {}", command.trim_end())
+        }
+        is_match
+    })
 }
 
 fn filter_command(command: &str) -> String {
