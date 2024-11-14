@@ -14,28 +14,12 @@ use simple_logger::SimpleLogger;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
-/// Reduces history file size.
+/// Reduces history file size, by removing:
+/// - duplicates
+/// - certain common commands
+/// - 
 ///
-/// I have a very large history file, and as a developer one of the most useful commands is
-/// the following function:
-/// ```bash
-/// hgrep () {
-///     history | grep "$@" | grep -v hgrep
-/// }
-/// ```
-/// I use it probably more than I google for things. It's like googling your command history.
-/// I set my HISTSIZE and HISTFILESIZE to very large values (20000), so if I know I ran
-/// some esoteric command anytime within the last few years, I will be able to grep for it.
-///
-/// Recently, I moved all my bash startup files into a git repo (and I'm amazed it took me
-/// so long to do so). I also moved my bash history file there (by setting HISTFILE).
-/// So, before committing changes to the history file, I want to do the following:
-/// - reduce the size of the file
 /// - scrape the file of anything confidential (passwords, etc.)
-///
-/// The history file format is:
-/// - a timestamp line, `#dddddddddd` (number of seconds since the Unix epoch).
-/// - One or more lines containing the command.
 pub struct Args {
     /// Only preserve commands greater than this length
     #[arg(short, long, default_value = "15")]
@@ -162,30 +146,35 @@ fn parse_timestamp(line: &str) -> Option<u32> {
 }
 
 // I looked for my most common commands via:
-//    grep -v '^#' /Users/jafischer/src/bashrc/history-mac |
+//    # Omit the timestamp lines in the history file
+//    grep -v '^#' $HISTFILE |
+//      # Use awk to count the first word of every line
 //      awk '{count[$1]++} END {for (word in count) print count[word], word}' |
-//      sort -n
+//      # Sort numerically, in reverse
+//      sort -rn |
+//      # Take the top 20
+//      head -n 20
 // Here are the 20 most common:
-// 107 pbpaste
-// 120 gi
-// 134 grep
-// 147 skuba
-// 178 cargo
-// 191 fexpr
-// 203 for
-// 209 cp
-// 214 echo
-// 243 curl
-// 263 docker
-// 263 mv
-// 287 cat
-// 363 g
-// 371 sk
-// 375 rm
-// 391 vi
-// 478 l
-// 485 git
 // 585 cd
+// 485 git
+// 478 l
+// 391 vi
+// 375 rm
+// 371 sk
+// 363 g
+// 287 cat
+// 263 mv
+// 263 docker
+// 243 curl
+// 214 echo
+// 209 cp
+// 203 for
+// 191 fexpr
+// 178 cargo
+// 147 skuba
+// 134 grep
+// 120 gi
+// 107 pbpaste
 // Total == 5607, so over half of the 10,000 commands in my history.
 static EXCLUDE_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| vec![
     // Common commands (which I don't need to save)
