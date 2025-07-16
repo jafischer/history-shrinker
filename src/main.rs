@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::{env, fs};
 
+use anyhow::Result;
 use btreemultimap::BTreeMultiMap;
 use clap::{command, Parser};
 use home::home_dir;
@@ -11,6 +12,9 @@ use log::{debug, info, trace, LevelFilter};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use simple_logger::SimpleLogger;
+
+static BASH_TIMESTAMP_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("^#[0-9]{8}[0-9]*$").unwrap());
+static ZSH_LINE_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("^: ([0-9]{8}[0-9]*):([0-9]*);(.*)$").unwrap());
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -36,25 +40,23 @@ pub struct Args {
     pub output: String,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<()> {
     let args = Args::parse();
 
     SimpleLogger::new().with_level(args.log).init().unwrap();
 
-    let histfile = if let Some(histfile_arg) = args.input {
-        Path::new(&histfile_arg).into()
-    } else if let Ok(histfile_env) = env::var("HISTFILE") {
-        Path::new(&histfile_env).into()
+    let history_file = if let Some(input_arg) = args.input {
+        Path::new(&input_arg).into()
+    } else if let Ok(env_var) = env::var("HISTFILE") {
+        Path::new(&env_var).into()
     } else {
         home_dir().unwrap().join(".bash_history")
     };
 
     // Slurp the whole file into a string.
-    let contents = fs::read_to_string(histfile)?;
+    let contents = fs::read_to_string(history_file)?;
     let lines = contents.lines();
-
-    let mut timestamp = 0u32;
-    let mut command = String::new();
+    let lines: Vec<&str> = lines.collect();
     // The map that stores the commands that we will write out to the reduced history file.
     let mut command_map: BTreeMultiMap<u32, String> = BTreeMultiMap::new();
     // This set is used to strip out duplicate commands from the history.
@@ -62,6 +64,97 @@ fn main() -> anyhow::Result<()> {
     // And let's keep track of the largest commands, too.
     let mut big_commands: BTreeMultiMap<usize, String> = BTreeMultiMap::new();
     let mut flagged_commands: HashSet<String> = HashSet::new();
+
+    // What type of history file is it?
+    let is_zsh = is_zsh_extended(&lines);
+    
+    if is_zsh {
+        process_zsh_history(
+            lines,
+            &mut command_map,
+            &mut commands_seen,
+            &mut big_commands,
+            &mut flagged_commands,
+        )?;
+    } else {
+        process_bash_history(
+            lines,
+            &mut command_map,
+            &mut commands_seen,
+            &mut big_commands,
+            &mut flagged_commands,
+        )?;
+    }
+
+    post_process(&args.output, is_zsh, command_map, big_commands, flagged_commands)?;
+
+    Ok(())
+}
+
+fn is_zsh_extended(lines: &Vec<&str>) -> bool {
+    // zsh EXTENDED_HISTORY format:
+    // : 1746142083:0;cargo build --workspace --profile release
+    //
+    // bash format:
+    // # 1746142083
+    // cargo build --workspace --profile release
+    //
+    // plain format:
+    // cargo build --workspace --profile release
+    //
+    // With or without the #timestamp lines, we can process as a bash history file.
+    // So we only care if it's zsh extended or not.
+
+    for &line in lines {
+        if ZSH_LINE_REGEX.is_match(line) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn process_zsh_history(
+    lines: Vec<&str>,
+    command_map: &mut BTreeMultiMap<u32, String>,
+    commands_seen: &mut HashSet<String>,
+    big_commands: &mut BTreeMultiMap<usize, String>,
+    flagged_commands: &mut HashSet<String>,
+) -> Result<()> {
+    let mut iter = lines.into_iter();
+    while let Some(line) = iter.next() {
+        if ZSH_LINE_REGEX.is_match(line) {
+            let captures = ZSH_LINE_REGEX.captures(line).unwrap();
+            let timestamp = captures[1].parse::<u32>()?;
+            // zsh (on my system at least) seems to ignore the execution time field; it is always 0.
+            // let execution_time = captures[2].parse::<u32>()?;
+            let mut command = captures[3].trim().to_string();
+            
+            // Multi-line commands have escaped newlines
+            while command.ends_with('\\') {
+                if let Some(continuation) = iter.next() {
+                    command = format!("{command}\n{continuation}");
+                } else {
+                    break;
+                }
+            }
+            
+            add_command(timestamp, &(command + "\n"), command_map, commands_seen, big_commands, flagged_commands);
+        }
+    }
+    
+    Ok(())
+}
+
+fn process_bash_history(
+    lines: Vec<&str>,
+    command_map: &mut BTreeMultiMap<u32, String>,
+    commands_seen: &mut HashSet<String>,
+    big_commands: &mut BTreeMultiMap<usize, String>,
+    flagged_commands: &mut HashSet<String>,
+) -> Result<()> {
+    let mut timestamp = 0u32;
+    let mut command = String::new();
 
     for line in lines {
         if let Some(new_timestamp) = parse_timestamp(line) {
@@ -71,10 +164,10 @@ fn main() -> anyhow::Result<()> {
             add_command(
                 timestamp,
                 &command,
-                &mut command_map,
-                &mut commands_seen,
-                &mut big_commands,
-                &mut flagged_commands,
+                command_map,
+                commands_seen,
+                big_commands,
+                flagged_commands,
             );
             timestamp = new_timestamp;
             command = String::new();
@@ -85,36 +178,8 @@ fn main() -> anyhow::Result<()> {
 
     // Because in the above loop we only add a command when we see the next command's timestamp, we
     // won't have added the final command. So do that now.
-    add_command(timestamp, &command, &mut command_map, &mut commands_seen, &mut big_commands, &mut flagged_commands);
-
-    let mut big_command_lengths = big_commands.keys().collect::<Vec<&usize>>();
-    big_command_lengths.sort();
-    for length in big_command_lengths {
-        let commands = big_commands.get_vec(length).unwrap();
-        trace!("{} Commands of length {length}", commands.len());
-        for command in commands {
-            trace!("{}", command.trim_end());
-        }
-    }
-
-    if !flagged_commands.is_empty() {
-        info!("+=======================+");
-        info!("| {:3} FLAGGED COMMANDS  |", flagged_commands.len());
-        info!("+=======================+");
-        flagged_commands
-            .iter()
-            .for_each(|command| info!("{}", command.trim_end()));
-    }
-
-    let mut output = File::create(&args.output)?;
-    for (timestamp, commands) in command_map {
-        for command in commands {
-            output.write_all(format!("#{}\n", timestamp).as_bytes())?;
-            // command already ends in newline
-            output.write_all(command.as_bytes())?;
-        }
-    }
-
+    add_command(timestamp, &command, command_map, commands_seen, big_commands, flagged_commands);
+    
     Ok(())
 }
 
@@ -142,14 +207,47 @@ fn add_command(
     }
 }
 
-static TIMESTAMP_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("^#[0-9]{8}[0-9]*$").unwrap());
-
 fn parse_timestamp(line: &str) -> Option<u32> {
-    if TIMESTAMP_REGEX.is_match(line) {
+    if BASH_TIMESTAMP_REGEX.is_match(line) {
         Some(line[1..].parse().unwrap())
     } else {
         None
     }
+}
+
+fn post_process(output: &str, is_zsh: bool, mut command_map: BTreeMultiMap<u32, String>, mut big_commands: BTreeMultiMap<usize, String>, mut flagged_commands: HashSet<String>) -> Result<()> {
+    let mut big_command_lengths = big_commands.keys().collect::<Vec<&usize>>();
+    big_command_lengths.sort();
+    for length in big_command_lengths {
+        let commands = big_commands.get_vec(length).unwrap();
+        trace!("{} Commands of length {length}", commands.len());
+        for command in commands {
+            trace!("{}", command.trim_end());
+        }
+    }
+
+    if !flagged_commands.is_empty() {
+        info!("+=======================+");
+        info!("| {:3} FLAGGED COMMANDS  |", flagged_commands.len());
+        info!("+=======================+");
+        flagged_commands
+            .iter()
+            .for_each(|command| info!("{}", command.trim_end()));
+    }
+
+    let mut output = File::create(output)?;
+    for (timestamp, commands) in command_map {
+        for command in commands {
+            if is_zsh {
+                output.write_all(format!(": {timestamp}:0;").as_bytes())?;
+            } else {
+                output.write_all(format!("#{timestamp}\n").as_bytes())?;
+            }
+            // command already ends in newline
+            output.write_all(command.as_bytes())?;
+        }
+    }
+    Ok(())
 }
 
 // I looked for my most common commands via:
