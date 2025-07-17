@@ -67,23 +67,11 @@ fn main() -> Result<()> {
 
     // What type of history file is it?
     let is_zsh = is_zsh_extended(&lines);
-    
+
     if is_zsh {
-        process_zsh_history(
-            lines,
-            &mut command_map,
-            &mut commands_seen,
-            &mut big_commands,
-            &mut flagged_commands,
-        )?;
+        process_zsh_history(lines, &mut command_map, &mut commands_seen, &mut big_commands, &mut flagged_commands)?;
     } else {
-        process_bash_history(
-            lines,
-            &mut command_map,
-            &mut commands_seen,
-            &mut big_commands,
-            &mut flagged_commands,
-        )?;
+        process_bash_history(lines, &mut command_map, &mut commands_seen, &mut big_commands, &mut flagged_commands)?;
     }
 
     post_process(&args.output, is_zsh, command_map, big_commands, flagged_commands)?;
@@ -129,7 +117,7 @@ fn process_zsh_history(
             // zsh (on my system at least) seems to ignore the execution time field; it is always 0.
             // let execution_time = captures[2].parse::<u32>()?;
             let mut command = captures[3].trim().to_string();
-            
+
             // Multi-line commands have escaped newlines
             while command.ends_with('\\') {
                 if let Some(continuation) = iter.next() {
@@ -138,11 +126,11 @@ fn process_zsh_history(
                     break;
                 }
             }
-            
+
             add_command(timestamp, &(command + "\n"), command_map, commands_seen, big_commands, flagged_commands);
         }
     }
-    
+
     Ok(())
 }
 
@@ -161,14 +149,7 @@ fn process_bash_history(
             // We've found the timestamp for the next command. So add the existing
             // command with the previous timestamp;
 
-            add_command(
-                timestamp,
-                &command,
-                command_map,
-                commands_seen,
-                big_commands,
-                flagged_commands,
-            );
+            add_command(timestamp, &command, command_map, commands_seen, big_commands, flagged_commands);
             timestamp = new_timestamp;
             command = String::new();
         } else {
@@ -179,7 +160,7 @@ fn process_bash_history(
     // Because in the above loop we only add a command when we see the next command's timestamp, we
     // won't have added the final command. So do that now.
     add_command(timestamp, &command, command_map, commands_seen, big_commands, flagged_commands);
-    
+
     Ok(())
 }
 
@@ -215,7 +196,13 @@ fn parse_timestamp(line: &str) -> Option<u32> {
     }
 }
 
-fn post_process(output: &str, is_zsh: bool, mut command_map: BTreeMultiMap<u32, String>, mut big_commands: BTreeMultiMap<usize, String>, mut flagged_commands: HashSet<String>) -> Result<()> {
+fn post_process(
+    output: &str,
+    is_zsh: bool,
+    mut command_map: BTreeMultiMap<u32, String>,
+    mut big_commands: BTreeMultiMap<usize, String>,
+    mut flagged_commands: HashSet<String>,
+) -> Result<()> {
     let mut big_command_lengths = big_commands.keys().collect::<Vec<&usize>>();
     big_command_lengths.sort();
     for length in big_command_lengths {
