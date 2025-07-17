@@ -43,7 +43,7 @@ pub struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    SimpleLogger::new().with_level(args.log).init().unwrap();
+    SimpleLogger::new().with_level(args.log).init()?;
 
     let history_file = if let Some(input_arg) = args.input {
         Path::new(&input_arg).into()
@@ -199,9 +199,9 @@ fn parse_timestamp(line: &str) -> Option<u32> {
 fn post_process(
     output: &str,
     is_zsh: bool,
-    mut command_map: BTreeMultiMap<u32, String>,
-    mut big_commands: BTreeMultiMap<usize, String>,
-    mut flagged_commands: HashSet<String>,
+    command_map: BTreeMultiMap<u32, String>,
+    big_commands: BTreeMultiMap<usize, String>,
+    flagged_commands: HashSet<String>,
 ) -> Result<()> {
     let mut big_command_lengths = big_commands.keys().collect::<Vec<&usize>>();
     big_command_lengths.sort();
